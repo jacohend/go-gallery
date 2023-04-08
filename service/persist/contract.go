@@ -2,7 +2,10 @@ package persist
 
 import (
 	"context"
+	"database/sql/driver"
+	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Contract represents an ethereum contract in the database
@@ -61,4 +64,32 @@ func (e ErrContractNotFoundByAddress) Error() string {
 
 func (e ErrContractNotFoundByID) Error() string {
 	return fmt.Sprintf("contract not found by ID: %s", e.ID)
+}
+
+// Scan implements the database/sql Scanner interface for the TokenMetadata type
+func (m *ContractMetadata) Scan(src interface{}) error {
+	if src == nil {
+		*m = ContractMetadata{}
+		return nil
+	}
+	return json.Unmarshal(src.([]uint8), m)
+}
+
+// Value implements the database/sql/driver Valuer interface for the TokenMetadata type
+func (m ContractMetadata) Value() (driver.Value, error) {
+	return m.MarshallJSON()
+}
+
+// MarshallJSON implements the json.Marshaller interface for the TokenMetadata type
+func (m ContractMetadata) MarshallJSON() ([]byte, error) {
+	val, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	cleaned := strings.ToValidUTF8(string(val), "")
+	// Replace literal '\\u0000' with empty string (marshal to JSON escapes each backslash)
+	cleaned = strings.ReplaceAll(cleaned, "\\\\u0000", "")
+	// Replace unicode NULL char (u+0000) i.e. '\u0000' with empty string
+	cleaned = strings.ReplaceAll(cleaned, "\\u0000", "")
+	return []byte(cleaned), nil
 }
