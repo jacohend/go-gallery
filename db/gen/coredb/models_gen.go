@@ -65,6 +65,7 @@ type Contract struct {
 	ProfileImageUrl  sql.NullString
 	BadgeUrl         sql.NullString
 	Description      sql.NullString
+	OwnerAddress     persist.Address
 }
 
 type ContractRelevance struct {
@@ -337,6 +338,7 @@ type Token struct {
 	IsUserMarkedSpam     sql.NullBool
 	IsProviderMarkedSpam sql.NullBool
 	LastSynced           time.Time
+	FallbackMedia        persist.FallbackMedia
 }
 
 type TopRecommendedUser struct {

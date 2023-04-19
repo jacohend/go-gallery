@@ -41,7 +41,6 @@ require (
 	github.com/magiclabs/magic-admin-go v0.2.0
 	github.com/microcosm-cc/bluemonday v1.0.21
 	github.com/ory/dockertest v3.3.5+incompatible
-	github.com/qmuntal/gltf v0.22.0 // indirect
 	github.com/segmentio/ksuid v1.0.4
 	github.com/sendgrid/rest v2.6.9+incompatible
 	github.com/sendgrid/sendgrid-go v3.12.0+incompatible
@@ -67,6 +66,7 @@ require (
 require (
 	github.com/ertan/go-farcaster v1.0.0-beta
 	github.com/jinzhu/copier v0.3.5
+	github.com/sourcegraph/conc v0.3.0
 	go.mozilla.org/sops/v3 v3.7.3
 )
 
@@ -244,7 +244,7 @@ require (
 	go.mozilla.org/gopgagent v0.0.0-20170926210634-4d7ea76ff71a // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
-	go.uber.org/multierr v1.8.0 // indirect
+	go.uber.org/multierr v1.9.0 // indirect
 	go.uber.org/zap v1.21.0 // indirect
 	golang.org/x/mod v0.6.0 // indirect
 	golang.org/x/net v0.6.0 // indirect

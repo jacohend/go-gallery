@@ -45,8 +45,10 @@ CREATE TABLE IF NOT EXISTS contracts (
     NAME varchar,
     SYMBOL varchar,
     ADDRESS varchar(255),
-    CREATOR_ADDRESS varchar(255),
+    OWNER_ADDRESS varchar(255),
     LATEST_BLOCK bigint
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS address_idx ON contracts (ADDRESS);
+
+alter table contracts add column owner_address character varying(255);

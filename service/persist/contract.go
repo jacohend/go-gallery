@@ -21,6 +21,7 @@ type Contract struct {
 	Address        EthereumAddress `json:"address"`
 	Symbol         NullString      `json:"symbol"`
 	Name           NullString      `json:"name"`
+	OwnerAddress   EthereumAddress `json:"owner_address"`
 	CreatorAddress EthereumAddress `json:"creator_address"`
 
 	LatestBlock      BlockNumber      `json:"latest_block"`
@@ -34,6 +35,7 @@ type ContractMetadata map[string]interface{}
 type ContractUpdateInput struct {
 	Symbol         NullString      `json:"symbol"`
 	Name           NullString      `json:"name"`
+	OwnerAddress   EthereumAddress `json:"owner_address"`
 	CreatorAddress EthereumAddress `json:"creator_address"`
 
 	LatestBlock BlockNumber `json:"latest_block"`
@@ -45,6 +47,7 @@ type ContractRepository interface {
 	GetMetadataByAddress(context.Context, EthereumAddress) (Contract, error)
 	UpdateByAddress(context.Context, EthereumAddress, ContractUpdateInput) error
 	UpsertByAddress(context.Context, EthereumAddress, Contract) error
+	GetContractsOwnedByAddress(context.Context, EthereumAddress) ([]Contract, error)
 	BulkUpsert(context.Context, []Contract) error
 	UpdateMetadataByAddress(context.Context, EthereumAddress, Contract) error
 }
