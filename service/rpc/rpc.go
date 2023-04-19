@@ -46,8 +46,13 @@ import (
 	"github.com/mikeydub/go-gallery/util"
 )
 
+func init() {
+	env.RegisterValidation("IPFS_URL", "required")
+	env.RegisterValidation("FALLBACK_IPFS_URL", "required")
+}
+
 const (
-	defaultHTTPTimeout             = 30
+	defaultHTTPTimeout             = 600
 	defaultHTTPKeepAlive           = 600
 	defaultHTTPMaxIdleConns        = 100
 	defaultHTTPMaxIdleConnsPerHost = 100
@@ -159,13 +164,14 @@ func (h metricsHandler) Log(r *log.Record) error {
 // NewIPFSShell returns an IPFS shell
 func NewIPFSShell() *shell.Shell {
 	sh := shell.NewShellWithClient(env.GetString("IPFS_API_URL"), newClientForIPFS(env.GetString("IPFS_PROJECT_ID"), env.GetString("IPFS_PROJECT_SECRET"), false))
-	sh.SetTimeout(time.Minute * 2)
+	sh.SetTimeout(defaultHTTPTimeout * time.Second)
 	return sh
 }
 
 // newHTTPClientForIPFS returns an http.Client configured with default settings intended for IPFS calls.
 func newClientForIPFS(projectID, projectSecret string, continueOnly bool) *http.Client {
 	return &http.Client{
+		Timeout: defaultHTTPTimeout * time.Second,
 		Transport: authTransport{
 			RoundTripper:  tracing.NewTracingTransport(http.DefaultTransport, continueOnly),
 			ProjectID:     projectID,
@@ -204,7 +210,7 @@ func newHTTPClientForRPC(continueTrace bool, spanOptions ...sentry.SpanOption) *
 	})
 
 	return &http.Client{
-		Timeout: time.Second * defaultHTTPTimeout,
+		Timeout: 0,
 		Transport: tracing.NewTracingTransport(&http.Transport{
 			TLSClientConfig: &tls.Config{
 				RootCAs: pool,
@@ -332,8 +338,6 @@ func RetryGetTokenContractMetadata(ctx context.Context, contractAddress persist.
 // GetMetadataFromURI parses and returns the NFT metadata for a given token URI
 func GetMetadataFromURI(ctx context.Context, turi persist.TokenURI, ipfsClient *shell.Shell, arweaveClient *goar.Client) (persist.TokenMetadata, error) {
 
-	ctx, cancel := context.WithTimeout(ctx, time.Minute*2)
-	defer cancel()
 	var meta persist.TokenMetadata
 	err := DecodeMetadataFromURI(ctx, turi, &meta, ipfsClient, arweaveClient)
 	if err != nil {
@@ -341,6 +345,106 @@ func GetMetadataFromURI(ctx context.Context, turi persist.TokenURI, ipfsClient *
 	}
 
 	return meta, nil
+
+}
+
+// GetMetadataFromURI parses and returns the NFT metadata for a given token URI
+func GetMetadataFromContractURI(ctx context.Context, curi persist.TokenURI, ipfsClient *shell.Shell, arweaveClient *goar.Client) (persist.ContractMetadata, error) {
+
+	ctx, cancel := context.WithTimeout(ctx, time.Minute*2)
+	defer cancel()
+	var meta persist.ContractMetadata
+	err := DecodeMetadataFromContractURI(ctx, curi, &meta, ipfsClient, arweaveClient)
+	if err != nil {
+		return nil, err
+	}
+
+	return meta, nil
+
+}
+
+// DecodeMetadataFromURI calls URI and decodes the data into a metadata map
+func DecodeMetadataFromContractURI(ctx context.Context, curi persist.TokenURI, into *persist.ContractMetadata, ipfsClient *shell.Shell, arweaveClient *goar.Client) error {
+
+	d, _ := ctx.Deadline()
+	logger.For(ctx).Debugf("Getting metadata from URI: %s -timeout: %s", curi, time.Until(d))
+	asString := curi.String()
+
+	logger.For(ctx).Debugf("Getting metadata from %s with type %s", asString, curi.Type())
+
+	switch curi.Type() {
+	case persist.URITypeBase64JSON:
+		// decode the base64 encoded json
+		b64data := asString[strings.IndexByte(asString, ',')+1:]
+		decoded, err := base64.StdEncoding.DecodeString(string(b64data))
+		if err != nil {
+			return fmt.Errorf("error decoding base64 metadata: %s \n\n%s", err, b64data)
+		}
+
+		return json.Unmarshal(util.RemoveBOM(decoded), into)
+	case persist.URITypeBase64SVG:
+		b64data := asString[strings.IndexByte(asString, ',')+1:]
+		decoded, err := base64.StdEncoding.DecodeString(string(b64data))
+		if err != nil {
+			return fmt.Errorf("error decoding base64 metadata: %s \n\n%s", err, b64data)
+		}
+		*into = persist.ContractMetadata{"image": string(decoded)}
+		return nil
+	case persist.URITypeIPFS, persist.URITypeIPFSGateway:
+
+		bs, err := GetIPFSData(ctx, ipfsClient, util.GetURIPath(asString, false))
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(util.RemoveBOM(bs), into)
+	case persist.URITypeArweave:
+		path := strings.ReplaceAll(asString, "arweave://", "")
+		path = strings.ReplaceAll(path, "ar://", "")
+		result, err := GetArweaveData(arweaveClient, path)
+		if err != nil {
+			result, err = GetArweaveDataHTTP(ctx, path)
+			if err != nil {
+				return err
+			}
+		}
+		return json.Unmarshal(result, into)
+	case persist.URITypeHTTP:
+
+		req, err := http.NewRequestWithContext(ctx, "GET", asString, nil)
+		if err != nil {
+			return fmt.Errorf("error creating request: %s", err)
+		}
+		resp, err := defaultHTTPClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("error getting metadata from http: %s", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode > 399 || resp.StatusCode < 200 {
+			return ErrHTTP{Status: resp.StatusCode, URL: asString}
+		}
+		return json.NewDecoder(resp.Body).Decode(into)
+	case persist.URITypeIPFSAPI:
+		parsedURL, err := url.Parse(asString)
+		if err != nil {
+			return err
+		}
+		query := parsedURL.Query().Get("arg")
+		it, err := ipfsClient.Cat(query)
+		if err != nil {
+			return err
+		}
+		defer it.Close()
+		return json.NewDecoder(it).Decode(into)
+	case persist.URITypeJSON, persist.URITypeSVG:
+		idx := strings.IndexByte(asString, '{')
+		if idx == -1 {
+			return json.Unmarshal(util.RemoveBOM([]byte(asString)), into)
+		}
+		return json.Unmarshal(util.RemoveBOM([]byte(asString[idx:])), into)
+
+	default:
+		return fmt.Errorf("unknown token URI type for metadata: %s", curi.Type())
+	}
 
 }
 
@@ -491,7 +595,16 @@ func GetDataFromURIAsReader(ctx context.Context, turi persist.TokenURI, ipfsClie
 		}
 		buf := bytes.NewBuffer(util.RemoveBOM(bs))
 		return util.NewFileHeaderReader(buf), nil
-	case persist.URITypeHTTP, persist.URITypeIPFSGateway:
+	case persist.URITypeIPFSGateway:
+		path := util.GetURIPath(asString, false)
+		resp, err := GetIPFSResponse(ctx, ipfsClient, path)
+		if err != nil {
+			logger.For(ctx).Errorf("Error getting data from IPFS: %s", err)
+		} else {
+			return util.NewFileHeaderReader(resp), nil
+		}
+		fallthrough
+	case persist.URITypeHTTP:
 		req, err := http.NewRequestWithContext(ctx, "GET", asString, nil)
 		if err != nil {
 			return nil, fmt.Errorf("error creating request: %s", err)
@@ -581,7 +694,7 @@ func DecodeMetadataFromURI(ctx context.Context, turi persist.TokenURI, into *per
 		if err != nil {
 			return fmt.Errorf("error decoding base64 metadata: %s \n\n%s", err, b64data)
 		}
-		into = &persist.TokenMetadata{"image": string(decoded)}
+		*into = persist.TokenMetadata{"image": string(decoded)}
 		return nil
 	case persist.URITypeIPFS, persist.URITypeIPFSGateway:
 
@@ -641,61 +754,6 @@ func DecodeMetadataFromURI(ctx context.Context, turi persist.TokenURI, into *per
 
 }
 
-func GetIPFSResponse(pCtx context.Context, ipfsClient *shell.Shell, path string) (io.ReadCloser, error) {
-	// Either an io.ReadCloser or an error
-	responseCh := make(chan interface{})
-
-	// Via HTTP gateway
-	go func() {
-		url := fmt.Sprintf("%s/ipfs/%s", env.GetString("IPFS_URL"), path)
-		req, err := http.NewRequestWithContext(pCtx, "GET", url, nil)
-		if err != nil {
-			responseCh <- err
-			return
-		}
-		resp, err := defaultHTTPClient.Do(req)
-		if err != nil {
-			responseCh <- err
-			return
-		}
-		if resp.StatusCode > 399 || resp.StatusCode < 200 {
-			responseCh <- ErrHTTP{Status: resp.StatusCode, URL: url}
-		}
-		responseCh <- resp.Body
-	}()
-
-	// Via IPFS cat
-	go func() {
-		if reader, err := ipfsClient.Cat(path); err != nil {
-			responseCh <- err
-		} else {
-			responseCh <- reader
-		}
-	}()
-
-	// Check if we can return the first reply
-	reply := <-responseCh
-	if result, ok := reply.(io.ReadCloser); ok {
-
-		// Close the second reply if we get one
-		go func() {
-			reply = <-responseCh
-			if result, ok := reply.(io.ReadCloser); ok {
-				result.Close()
-			}
-		}()
-
-		return result, nil
-	}
-
-	// Otherwise wait for the second reply
-	reply = <-responseCh
-	if result, ok := reply.(io.ReadCloser); ok {
-		return result, nil
-	}
-	return nil, reply.(error)
-}
-
 func GetIPFSData(pCtx context.Context, ipfsClient *shell.Shell, path string) ([]byte, error) {
 	response, err := GetIPFSResponse(pCtx, ipfsClient, path)
 	if err != nil {
@@ -748,23 +806,144 @@ func parseContentType(contentType string) string {
 	return contentType
 }
 
+type fetchResulter interface {
+	Error() error
+}
+
+type headerResult struct {
+	contentType   string
+	contentLength int64
+	err           error
+}
+
+func (r headerResult) Error() error {
+	return r.err
+}
+
+type ipfsResult struct {
+	resp io.ReadCloser
+	err  error
+}
+
+func (r ipfsResult) Error() error {
+	return r.err
+}
+
+func firstNonError(ctx context.Context, fetches ...func(context.Context) fetchResulter) fetchResulter {
+	c := make(chan fetchResulter)
+	done := make(chan bool)
+
+	for i := range fetches {
+		go func(i int) {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case c <- fetches[i](ctx):
+			}
+		}(i)
+	}
+
+	var lastError fetchResulter
+
+	for i := 0; i < len(fetches); i++ {
+		r := <-c
+		if r.Error() == nil {
+			close(done)
+			return r
+		}
+		lastError = r
+		i++
+	}
+
+	return lastError
+}
+
 func getContentHeaders(ctx context.Context, url string) (contentType string, contentLength int64, err error) {
-	// Check if server supports HEAD
-	if headers, err := getHeaders(ctx, "HEAD", url); err == nil {
-		contentType = parseContentType(headers.Get("Content-Type"))
-		contentLength, err = parseContentLength(headers.Get("Content-Length"))
-		return contentType, contentLength, err
+	contentHeader := func(method, url string) func(ctx context.Context) fetchResulter {
+		return func(ctx context.Context) fetchResulter {
+			headers, err := getHeaders(ctx, method, url)
+			if err != nil {
+				return headerResult{err: err}
+			}
+			contentType := parseContentType(headers.Get("Content-Type"))
+			contentLength, err := parseContentLength(headers.Get("Content-Length"))
+			return headerResult{contentType, contentLength, err}
+		}
+	}
+	fromHEAD := contentHeader(http.MethodHead, url)
+	fromGET := contentHeader(http.MethodGet, url)
+	result := firstNonError(ctx, fromHEAD, fromGET)
+	headers := result.(headerResult)
+	return headers.contentType, headers.contentLength, headers.Error()
+}
+
+func GetIPFSResponse(pCtx context.Context, ipfsClient *shell.Shell, path string) (io.ReadCloser, error) {
+	fromHTTP := func(ctx context.Context) fetchResulter {
+		url := fmt.Sprintf("%s/ipfs/%s", env.GetString("IPFS_URL"), path)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return ipfsResult{err: err}
+		}
+
+		resp, err := defaultHTTPClient.Do(req)
+		if err != nil {
+			return ipfsResult{err: err}
+		}
+
+		if resp.StatusCode > 399 || resp.StatusCode < 200 {
+			url := fmt.Sprintf("%s/ipfs/%s", env.GetString("FALLBACK_IPFS_URL"), path)
+			req, err = http.NewRequestWithContext(ctx, "GET", url, nil)
+			if err != nil {
+				return ipfsResult{err: err}
+			}
+
+			resp, err = defaultHTTPClient.Do(req)
+			if err != nil {
+				return ipfsResult{err: err}
+			}
+			if resp.StatusCode > 399 || resp.StatusCode < 200 {
+				return ipfsResult{err: ErrHTTP{Status: resp.StatusCode, URL: url}}
+			}
+			logger.For(ctx).Infof("IPFS HTTP fallback fallback successful %s", path)
+		}
+
+		logger.For(ctx).Infof("IPFS HTTP fallback successful %s", path)
+
+		return ipfsResult{resp: resp.Body}
 	}
 
-	// Otherwise try GET
-	headers, err := getHeaders(ctx, "GET", url)
-	if err == nil {
-		contentType = parseContentType(headers.Get("Content-Type"))
-		contentLength, err = parseContentLength(headers.Get("Content-Length"))
-		return contentType, contentLength, err
+	fromIPFS := func(ctx context.Context) fetchResulter {
+		reader, err := ipfsClient.Cat(path)
+		logger.For(ctx).Infof("IPFS cat fallback successful %s", path)
+		return ipfsResult{reader, err}
 	}
 
-	return contentType, contentLength, err
+	fromIPFSAPI := func(ctx context.Context) fetchResulter {
+		url := fmt.Sprintf("https://ipfs.io/ipfs/%s", path)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return ipfsResult{err: err}
+		}
+
+		resp, err := defaultHTTPClient.Do(req)
+		if err != nil {
+			return ipfsResult{err: err}
+		}
+
+		if resp.StatusCode > 399 || resp.StatusCode < 200 {
+			return ipfsResult{err: ErrHTTP{Status: resp.StatusCode, URL: url}}
+		}
+
+		logger.For(ctx).Infof("IPFS API fallback successful %s", path)
+
+		return ipfsResult{resp: resp.Body}
+	}
+
+	result := firstNonError(pCtx, fromHTTP, fromIPFS, fromIPFSAPI)
+	response := result.(ipfsResult)
+	return response.resp, response.Error()
 }
 
 // GetIPFSHeaders returns the headers for the given IPFS hash
@@ -776,6 +955,43 @@ func GetIPFSHeaders(ctx context.Context, path string) (contentType string, conte
 // GetHTTPHeaders returns the headers for the given URL
 func GetHTTPHeaders(ctx context.Context, url string) (contentType string, contentLength int64, err error) {
 	return getContentHeaders(ctx, url)
+}
+
+func GetContractURI(ctx context.Context, pTokenType persist.TokenType, pContractAddress persist.EthereumAddress, ethClient *ethclient.Client) (persist.TokenURI, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	contractAddress := common.HexToAddress(string(pContractAddress))
+	switch pTokenType {
+	case persist.TokenTypeERC721:
+		instance, err := contracts.NewIERC721ContractURICaller(contractAddress, ethClient)
+		if err != nil {
+			return "", err
+		}
+		uri, err := instance.ContractURI(&bind.CallOpts{
+			Context: ctx,
+		})
+		return persist.TokenURI(strings.ReplaceAll(uri, "\x00", "")), nil
+	case persist.TokenTypeERC1155:
+		instance, err := contracts.NewIERC1155ContractURICaller(contractAddress, ethClient)
+		if err != nil {
+			return "", err
+		}
+		uri, err := instance.ContractURI(&bind.CallOpts{
+			Context: ctx,
+		})
+		return persist.TokenURI(strings.ReplaceAll(uri, "\x00", "")), nil
+	default:
+		if contractURI, err := GetContractURI(ctx, persist.TokenTypeERC721, pContractAddress, ethClient); err == nil {
+			return contractURI, nil
+		}
+
+		if contractURI, err := GetContractURI(ctx, persist.TokenTypeERC1155, pContractAddress, ethClient); err == nil {
+			return contractURI, nil
+		}
+
+		return "", fmt.Errorf("unsupported token type: %s", pTokenType)
+	}
+
 }
 
 // GetTokenURI returns metadata URI for a given token address.
@@ -960,6 +1176,23 @@ func GetContractCreator(ctx context.Context, contractAddress persist.EthereumAdd
 		}
 	}
 	return "", fmt.Errorf("could not find contract creator")
+}
+
+// GetContractOwner returns the address of the contract owner
+func GetContractOwner(ctx context.Context, contractAddress persist.EthereumAddress, ethClient *ethclient.Client) (persist.EthereumAddress, error) {
+	instance, err := contracts.NewOwnableCaller(contractAddress.Address(), ethClient)
+	if err != nil {
+		return "", err
+	}
+
+	owner, err := instance.Owner(&bind.CallOpts{
+		Context: ctx,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return persist.EthereumAddress(strings.ToLower(owner.String())), nil
 }
 
 /*

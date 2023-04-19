@@ -23,11 +23,12 @@ insert into tokens
   , name
   , description
   , collectors_note
-  , media
   , token_type
   , token_id
   , quantity
   , ownership_history
+  , media
+  , fallback_media
   , token_metadata
   , external_url
   , block_number
@@ -49,11 +50,12 @@ insert into tokens
     , name
     , description
     , collectors_note
-    , media
     , token_type
     , token_id
     , quantity
     , ownership_history[ownership_history_start_idx::int:ownership_history_end_idx::int]
+    , media
+    , fallback_media
     , token_metadata
     , external_url
     , block_number
@@ -75,32 +77,32 @@ insert into tokens
       , unnest($6::varchar[]) as name
       , unnest($7::varchar[]) as description
       , unnest($8::varchar[]) as collectors_note
-      , unnest($9::jsonb[]) as media
-      , unnest($10::varchar[]) as token_type
-      , unnest($11::varchar[]) as token_id
-      , unnest($12::varchar[]) as quantity
-      , $13::jsonb[] as ownership_history
-      , unnest($14::int[]) as ownership_history_start_idx
-      , unnest($15::int[]) as ownership_history_end_idx
-      , unnest($16::jsonb[]) as token_metadata
-      , unnest($17::varchar[]) as external_url
-      , unnest($18::bigint[]) as block_number
-      , unnest($19::varchar[]) as owner_user_id
-      , $20::varchar[] as owned_by_wallets
-      , unnest($21::int[]) as owned_by_wallets_start_idx
-      , unnest($22::int[]) as owned_by_wallets_end_idx
-      , unnest($23::int[]) as chain
-      , unnest($24::varchar[]) as contract
-      , unnest($25::bool[]) as is_user_marked_spam
-      , unnest($26::bool[]) as is_provider_marked_spam
-      , unnest($27::timestamptz[]) as last_synced
-      , unnest($28::varchar[]) as token_uri
+      , unnest($9::varchar[]) as token_type
+      , unnest($10::varchar[]) as token_id
+      , unnest($11::varchar[]) as quantity
+      , $12::jsonb[] as ownership_history
+      , unnest($13::int[]) as ownership_history_start_idx
+      , unnest($14::int[]) as ownership_history_end_idx
+      , unnest($15::jsonb[]) as media
+      , unnest($16::jsonb[]) as fallback_media
+      , unnest($17::jsonb[]) as token_metadata
+      , unnest($18::varchar[]) as external_url
+      , unnest($19::bigint[]) as block_number
+      , unnest($20::varchar[]) as owner_user_id
+      , $21::varchar[] as owned_by_wallets
+      , unnest($22::int[]) as owned_by_wallets_start_idx
+      , unnest($23::int[]) as owned_by_wallets_end_idx
+      , unnest($24::int[]) as chain
+      , unnest($25::varchar[]) as contract
+      , unnest($26::bool[]) as is_user_marked_spam
+      , unnest($27::bool[]) as is_provider_marked_spam
+      , unnest($28::timestamptz[]) as last_synced
+      , unnest($29::varchar[]) as token_uri
   ) bulk_upsert
 )
 on conflict (token_id, contract, chain, owner_user_id) where deleted = false
 do update set
-  media = excluded.media
-  , token_type = excluded.token_type
+  token_type = excluded.token_type
   , chain = excluded.chain
   , name = excluded.name
   , description = excluded.description
@@ -109,6 +111,7 @@ do update set
   , owner_user_id = excluded.owner_user_id
   , owned_by_wallets = excluded.owned_by_wallets
   , ownership_history = tokens.ownership_history || excluded.ownership_history
+  , fallback_media = excluded.fallback_media
   , token_metadata = excluded.token_metadata
   , external_url = excluded.external_url
   , block_number = excluded.block_number
@@ -117,7 +120,7 @@ do update set
   , is_user_marked_spam = tokens.is_user_marked_spam
   , is_provider_marked_spam = excluded.is_provider_marked_spam
   , last_synced = greatest(excluded.last_synced,tokens.last_synced)
-returning id, deleted, version, created_at, last_updated, name, description, collectors_note, media, token_uri, token_type, token_id, quantity, ownership_history, token_metadata, external_url, block_number, owner_user_id, owned_by_wallets, chain, contract, is_user_marked_spam, is_provider_marked_spam, last_synced
+returning id, deleted, version, created_at, last_updated, name, description, collectors_note, media, token_uri, token_type, token_id, quantity, ownership_history, token_metadata, external_url, block_number, owner_user_id, owned_by_wallets, chain, contract, is_user_marked_spam, is_provider_marked_spam, last_synced, fallback_media
 `
 
 type UpsertTokensParams struct {
@@ -129,13 +132,14 @@ type UpsertTokensParams struct {
 	Name                     []string
 	Description              []string
 	CollectorsNote           []string
-	Media                    []pgtype.JSONB
 	TokenType                []string
 	TokenID                  []string
 	Quantity                 []string
 	OwnershipHistory         []pgtype.JSONB
 	OwnershipHistoryStartIdx []int32
 	OwnershipHistoryEndIdx   []int32
+	Media                    []pgtype.JSONB
+	FallbackMedia            []pgtype.JSONB
 	TokenMetadata            []pgtype.JSONB
 	ExternalUrl              []string
 	BlockNumber              []int64
@@ -161,13 +165,14 @@ func (q *Queries) UpsertTokens(ctx context.Context, arg UpsertTokensParams) ([]T
 		arg.Name,
 		arg.Description,
 		arg.CollectorsNote,
-		arg.Media,
 		arg.TokenType,
 		arg.TokenID,
 		arg.Quantity,
 		arg.OwnershipHistory,
 		arg.OwnershipHistoryStartIdx,
 		arg.OwnershipHistoryEndIdx,
+		arg.Media,
+		arg.FallbackMedia,
 		arg.TokenMetadata,
 		arg.ExternalUrl,
 		arg.BlockNumber,
@@ -214,6 +219,7 @@ func (q *Queries) UpsertTokens(ctx context.Context, arg UpsertTokensParams) ([]T
 			&i.IsUserMarkedSpam,
 			&i.IsProviderMarkedSpam,
 			&i.LastSynced,
+			&i.FallbackMedia,
 		); err != nil {
 			return nil, err
 		}

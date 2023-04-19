@@ -9,11 +9,12 @@ insert into tokens
   , name
   , description
   , collectors_note
-  , media
   , token_type
   , token_id
   , quantity
   , ownership_history
+  , media
+  , fallback_media
   , token_metadata
   , external_url
   , block_number
@@ -35,11 +36,12 @@ insert into tokens
     , name
     , description
     , collectors_note
-    , media
     , token_type
     , token_id
     , quantity
     , ownership_history[ownership_history_start_idx::int:ownership_history_end_idx::int]
+    , media
+    , fallback_media
     , token_metadata
     , external_url
     , block_number
@@ -61,13 +63,14 @@ insert into tokens
       , unnest(@name::varchar[]) as name
       , unnest(@description::varchar[]) as description
       , unnest(@collectors_note::varchar[]) as collectors_note
-      , unnest(@media::jsonb[]) as media
       , unnest(@token_type::varchar[]) as token_type
       , unnest(@token_id::varchar[]) as token_id
       , unnest(@quantity::varchar[]) as quantity
       , @ownership_history::jsonb[] as ownership_history
       , unnest(@ownership_history_start_idx::int[]) as ownership_history_start_idx
       , unnest(@ownership_history_end_idx::int[]) as ownership_history_end_idx
+      , unnest(@media::jsonb[]) as media
+      , unnest(@fallback_media::jsonb[]) as fallback_media
       , unnest(@token_metadata::jsonb[]) as token_metadata
       , unnest(@external_url::varchar[]) as external_url
       , unnest(@block_number::bigint[]) as block_number
@@ -85,8 +88,7 @@ insert into tokens
 )
 on conflict (token_id, contract, chain, owner_user_id) where deleted = false
 do update set
-  media = excluded.media
-  , token_type = excluded.token_type
+  token_type = excluded.token_type
   , chain = excluded.chain
   , name = excluded.name
   , description = excluded.description
@@ -95,6 +97,7 @@ do update set
   , owner_user_id = excluded.owner_user_id
   , owned_by_wallets = excluded.owned_by_wallets
   , ownership_history = tokens.ownership_history || excluded.ownership_history
+  , fallback_media = excluded.fallback_media
   , token_metadata = excluded.token_metadata
   , external_url = excluded.external_url
   , block_number = excluded.block_number

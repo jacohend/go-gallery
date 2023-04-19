@@ -183,6 +183,11 @@ type MediaDimensions {
   aspectRatio: Float
 }
 
+type FallbackMedia {
+  mediaURL: String
+  mediaType: String
+}
+
 interface Media {
   # Various sizes of preview images for the media
   previewURLs: PreviewURLSet
@@ -212,6 +217,7 @@ type ImageMedia implements Media {
 
 type GIFMedia implements Media {
   previewURLs: PreviewURLSet
+  staticPreviewURLs: PreviewURLSet
   mediaURL: String
   mediaType: String
 
@@ -289,6 +295,8 @@ type UnknownMedia implements Media {
 
   contentRenderURL: String
   dimensions: MediaDimensions
+
+  fallbackMedia: FallbackMedia
 }
 
 type SyncingMedia implements Media {
@@ -298,6 +306,8 @@ type SyncingMedia implements Media {
 
   contentRenderURL: String
   dimensions: MediaDimensions
+
+  fallbackMedia: FallbackMedia
 }
 
 type InvalidMedia implements Media {
@@ -616,6 +626,8 @@ enum UserExperienceType {
   MerchStoreUpsell
   MaintenanceFeb2023
   TwitterConnectionOnboardingUpsell
+  UpsellMintMemento4
+  UpsellGallerySelects1
 }
 
 type UserExperience {

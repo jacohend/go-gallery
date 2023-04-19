@@ -58,6 +58,8 @@ const (
 	MediaTypeUnknown MediaType = "unknown"
 	// MediaTypeSyncing represents a syncing media
 	MediaTypeSyncing MediaType = "syncing"
+	// MediaTypeFallback represents a fallback media
+	MediaTypeFallback MediaType = "fallback"
 )
 
 var mediaTypePriorities = []MediaType{MediaTypeHTML, MediaTypeAudio, MediaTypeAnimation, MediaTypeVideo, MediaTypeBase64BMP, MediaTypeGIF, MediaTypeSVG, MediaTypeImage, MediaTypeJSON, MediaTypeBase64Text, MediaTypeText, MediaTypeSyncing, MediaTypeUnknown, MediaTypeInvalid}
@@ -206,8 +208,6 @@ type Token struct {
 	Deleted      NullBool        `json:"-"`
 	LastUpdated  LastUpdatedTime `json:"last_updated"`
 
-	Media Media `json:"media"`
-
 	TokenType TokenType `json:"token_type"`
 
 	Chain Chain `json:"chain"`
@@ -234,6 +234,10 @@ type Dimensions struct {
 	Height int `json:"height"`
 }
 
+func (d Dimensions) Valid() bool {
+	return d.Width > 0 && d.Height > 0
+}
+
 // Media represents a token's media content with processed images from metadata
 type Media struct {
 	ThumbnailURL   NullString `json:"thumbnail_url,omitempty"`
@@ -243,50 +247,9 @@ type Media struct {
 	Dimensions     Dimensions `json:"dimensions"`
 }
 
-// IsServable returns true if the token's Media has enough information to serve it's assets.
-func (m Media) IsServable() bool {
-	return m.MediaURL != "" && m.MediaType.IsValid()
-}
-
-// NFT represents an old nft throughout the application
-type NFT struct {
-	Version         NullInt32       `json:"version"` // schema version for this model
-	ID              DBID            `json:"id" binding:"required"`
-	CreationTime    CreationTime    `json:"created_at"`
-	Deleted         NullBool        `json:"-"`
-	LastUpdatedTime LastUpdatedTime `json:"last_updated"`
-
-	CollectorsNote NullString `json:"collectors_note"`
-
-	// OwnerUsers     []*User  `bson:"owner_users" json:"owner_users"`
-	OwnerAddress EthereumAddress `json:"owner_address"`
-
-	MultipleOwners NullBool `json:"multiple_owners"`
-
-	Name                NullString      `json:"name"`
-	Description         NullString      `json:"description"`
-	ExternalURL         NullString      `json:"external_url"`
-	TokenMetadataURL    NullString      `json:"token_metadata_url"`
-	CreatorAddress      EthereumAddress `json:"creator_address"`
-	CreatorName         NullString      `json:"creator_name"`
-	Contract            NFTContract     `json:"asset_contract"`
-	TokenCollectionName NullString      `json:"token_collection_name"`
-
-	OpenseaID NullInt64 `json:"opensea_id"`
-	// OPEN_SEA_TOKEN_ID
-	// https://api.opensea.io/api/v1/asset/0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270/26000331
-	// (/asset/:contract_address/:token_id)
-	OpenseaTokenID TokenID `json:"opensea_token_id"`
-
-	// IMAGES - OPENSEA
-	ImageURL             NullString `json:"image_url"`
-	ImageThumbnailURL    NullString `json:"image_thumbnail_url"`
-	ImagePreviewURL      NullString `json:"image_preview_url"`
-	ImageOriginalURL     NullString `json:"image_original_url"`
-	AnimationURL         NullString `json:"animation_url"`
-	AnimationOriginalURL NullString `json:"animation_original_url"`
-
-	AcquisitionDateStr NullString `json:"acquisition_date"`
+type FallbackMedia struct {
+	ImageURL   NullString `json:"image_url,omitempty"`
+	Dimensions Dimensions `json:"dimensions"`
 }
 
 // NFTContract represents a smart contract's information for a given NFT
@@ -335,8 +298,8 @@ type TokenRepository interface {
 	GetByContract(context.Context, EthereumAddress, int64, int64) ([]Token, error)
 	GetOwnedByContract(context.Context, EthereumAddress, EthereumAddress, int64, int64) ([]Token, Contract, error)
 	GetByTokenIdentifiers(context.Context, TokenID, EthereumAddress, int64, int64) ([]Token, error)
+	GetURIByTokenIdentifiers(context.Context, TokenID, EthereumAddress) (TokenURI, error)
 	GetByIdentifiers(context.Context, TokenID, EthereumAddress, EthereumAddress) (Token, error)
-	GetMetadataByTokenIdentifiers(context.Context, TokenID, EthereumAddress) (TokenURI, TokenMetadata, Media, error)
 	DeleteByID(context.Context, DBID) error
 	BulkUpsert(context.Context, []Token) error
 	Upsert(context.Context, Token) error
@@ -415,7 +378,7 @@ func MediaFromContentType(contentType string) MediaType {
 	switch spl[0] {
 	case "image":
 		switch spl[1] {
-		case "svg":
+		case "svg", "svg+xml":
 			return MediaTypeSVG
 		case "gif":
 			return MediaTypeGIF
@@ -433,8 +396,12 @@ func MediaFromContentType(contentType string) MediaType {
 		default:
 			return MediaTypeText
 		}
-	case "pdf":
-		return MediaTypePDF
+	case "application":
+		switch spl[1] {
+		case "pdf":
+			return MediaTypePDF
+		}
+		fallthrough
 	default:
 		return MediaTypeUnknown
 	}
@@ -509,6 +476,14 @@ func (c *Chain) UnmarshalJSON(data []byte) error {
 			*c = ChainETH
 		case "tezos":
 			*c = ChainTezos
+		case "arbitrum":
+			*c = ChainArbitrum
+		case "polygon":
+			*c = ChainPolygon
+		case "optimism":
+			*c = ChainOptimism
+		case "poap":
+			*c = ChainPOAP
 		}
 		return nil
 	}
@@ -549,6 +524,12 @@ func (c Chain) MarshalGQL(w io.Writer) {
 		w.Write([]byte(`"Tezos"`))
 	case ChainPOAP:
 		w.Write([]byte(`"POAP"`))
+	case ChainArbitrum:
+		w.Write([]byte(`"Arbitrum"`))
+	case ChainPolygon:
+		w.Write([]byte(`"Polygon"`))
+	case ChainOptimism:
+		w.Write([]byte(`"Optimism"`))
 	}
 }
 
@@ -732,6 +713,11 @@ func (hex HexString) Add(new HexString) HexString {
 	return HexString(asInt.Add(asInt, new.BigInt()).Text(16))
 }
 
+// IsServable returns true if the token's Media has enough information to serve it's assets.
+func (m Media) IsServable() bool {
+	return m.MediaURL != "" && m.MediaType.IsValid()
+}
+
 // Value implements the driver.Valuer interface for media
 func (m Media) Value() (driver.Value, error) {
 	return json.Marshal(m)
@@ -741,6 +727,25 @@ func (m Media) Value() (driver.Value, error) {
 func (m *Media) Scan(src interface{}) error {
 	if src == nil {
 		*m = Media{}
+		return nil
+	}
+	return json.Unmarshal(src.([]uint8), &m)
+}
+
+// IsServable returns true if the token's Media has enough information to serve it's assets.
+func (m FallbackMedia) IsServable() bool {
+	return m.ImageURL != ""
+}
+
+// Value implements the driver.Valuer interface for media
+func (m FallbackMedia) Value() (driver.Value, error) {
+	return json.Marshal(m)
+}
+
+// Scan implements the sql.Scanner interface for media
+func (m *FallbackMedia) Scan(src interface{}) error {
+	if src == nil {
+		*m = FallbackMedia{}
 		return nil
 	}
 	return json.Unmarshal(src.([]uint8), &m)
@@ -761,7 +766,7 @@ func (a EthereumAddress) Value() (driver.Value, error) {
 }
 
 // MarshallJSON implements the json.Marshaller interface for the address type
-func (a EthereumAddress) MarshallJSON() ([]byte, error) {
+func (a EthereumAddress) MarshalJSON() ([]byte, error) {
 	return json.Marshal(a.String())
 }
 
@@ -834,12 +839,13 @@ func (m *TokenMetadata) Scan(src interface{}) error {
 
 // Value implements the database/sql/driver Valuer interface for the TokenMetadata type
 func (m TokenMetadata) Value() (driver.Value, error) {
-	return m.MarshallJSON()
+	return m.MarshalJSON()
 }
 
-// MarshallJSON implements the json.Marshaller interface for the TokenMetadata type
-func (m TokenMetadata) MarshallJSON() ([]byte, error) {
-	val, err := json.Marshal(m)
+// MarshalJSON implements the json.Marshaller interface for the TokenMetadata type
+func (m TokenMetadata) MarshalJSON() ([]byte, error) {
+	asMap := map[string]interface{}(m)
+	val, err := json.Marshal(asMap)
 	if err != nil {
 		return nil, err
 	}

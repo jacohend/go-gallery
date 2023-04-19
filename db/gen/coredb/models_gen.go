@@ -65,6 +65,7 @@ type Contract struct {
 	ProfileImageUrl  sql.NullString
 	BadgeUrl         sql.NullString
 	Description      sql.NullString
+	OwnerAddress     persist.Address
 }
 
 type ContractRelevance struct {
@@ -290,6 +291,12 @@ type RecommendationResult struct {
 	Deleted           bool
 }
 
+type ScrubbedPiiAccountCreationInfo struct {
+	UserID    persist.DBID
+	IpAddress persist.Address
+	CreatedAt time.Time
+}
+
 type ScrubbedPiiForUser struct {
 	UserID          persist.DBID
 	PiiEmailAddress persist.Email
@@ -331,6 +338,7 @@ type Token struct {
 	IsUserMarkedSpam     sql.NullBool
 	IsProviderMarkedSpam sql.NullBool
 	LastSynced           time.Time
+	FallbackMedia        persist.FallbackMedia
 }
 
 type TopRecommendedUser struct {

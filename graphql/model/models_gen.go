@@ -1008,6 +1008,11 @@ func (ErrUsernameNotAvailable) IsUpdateUserInfoPayloadOrError() {}
 func (ErrUsernameNotAvailable) IsError()                        {}
 func (ErrUsernameNotAvailable) IsCreateUserPayloadOrError()     {}
 
+type FallbackMedia struct {
+	MediaURL  *string `json:"mediaURL"`
+	MediaType *string `json:"mediaType"`
+}
+
 type FeedConnection struct {
 	Edges    []*FeedEdge `json:"edges"`
 	PageInfo *PageInfo   `json:"pageInfo"`
@@ -1086,11 +1091,12 @@ type FollowUserPayload struct {
 func (FollowUserPayload) IsFollowUserPayloadOrError() {}
 
 type GIFMedia struct {
-	PreviewURLs      *PreviewURLSet   `json:"previewURLs"`
-	MediaURL         *string          `json:"mediaURL"`
-	MediaType        *string          `json:"mediaType"`
-	ContentRenderURL *string          `json:"contentRenderURL"`
-	Dimensions       *MediaDimensions `json:"dimensions"`
+	PreviewURLs       *PreviewURLSet   `json:"previewURLs"`
+	StaticPreviewURLs *PreviewURLSet   `json:"staticPreviewURLs"`
+	MediaURL          *string          `json:"mediaURL"`
+	MediaType         *string          `json:"mediaType"`
+	ContentRenderURL  *string          `json:"contentRenderURL"`
+	Dimensions        *MediaDimensions `json:"dimensions"`
 }
 
 func (GIFMedia) IsMediaSubtype() {}
@@ -1621,6 +1627,7 @@ type SyncingMedia struct {
 	MediaType        *string          `json:"mediaType"`
 	ContentRenderURL *string          `json:"contentRenderURL"`
 	Dimensions       *MediaDimensions `json:"dimensions"`
+	FallbackMedia    *FallbackMedia   `json:"fallbackMedia"`
 }
 
 func (SyncingMedia) IsMediaSubtype() {}
@@ -1750,6 +1757,7 @@ type UnknownMedia struct {
 	MediaType        *string          `json:"mediaType"`
 	ContentRenderURL *string          `json:"contentRenderURL"`
 	Dimensions       *MediaDimensions `json:"dimensions"`
+	FallbackMedia    *FallbackMedia   `json:"fallbackMedia"`
 }
 
 func (UnknownMedia) IsMediaSubtype() {}
@@ -2253,6 +2261,8 @@ const (
 	UserExperienceTypeMerchStoreUpsell                  UserExperienceType = "MerchStoreUpsell"
 	UserExperienceTypeMaintenanceFeb2023                UserExperienceType = "MaintenanceFeb2023"
 	UserExperienceTypeTwitterConnectionOnboardingUpsell UserExperienceType = "TwitterConnectionOnboardingUpsell"
+	UserExperienceTypeUpsellMintMemento4                UserExperienceType = "UpsellMintMemento4"
+	UserExperienceTypeUpsellGallerySelects1             UserExperienceType = "UpsellGallerySelects1"
 )
 
 var AllUserExperienceType = []UserExperienceType{
@@ -2261,11 +2271,13 @@ var AllUserExperienceType = []UserExperienceType{
 	UserExperienceTypeMerchStoreUpsell,
 	UserExperienceTypeMaintenanceFeb2023,
 	UserExperienceTypeTwitterConnectionOnboardingUpsell,
+	UserExperienceTypeUpsellMintMemento4,
+	UserExperienceTypeUpsellGallerySelects1,
 }
 
 func (e UserExperienceType) IsValid() bool {
 	switch e {
-	case UserExperienceTypeMultiGalleryAnnouncement, UserExperienceTypeEmailUpsell, UserExperienceTypeMerchStoreUpsell, UserExperienceTypeMaintenanceFeb2023, UserExperienceTypeTwitterConnectionOnboardingUpsell:
+	case UserExperienceTypeMultiGalleryAnnouncement, UserExperienceTypeEmailUpsell, UserExperienceTypeMerchStoreUpsell, UserExperienceTypeMaintenanceFeb2023, UserExperienceTypeTwitterConnectionOnboardingUpsell, UserExperienceTypeUpsellMintMemento4, UserExperienceTypeUpsellGallerySelects1:
 		return true
 	}
 	return false
